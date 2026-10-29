@@ -446,6 +446,12 @@ async fn run(
                 }
             }
             Err(e) => {
+                // A redirection or a refused certificate does not heal by
+                // trying again (iOS: a permanent failure, §1.5).
+                if let Some(reason) = permanent(&e.to_string()) {
+                    state(ConnState::Abandoned { reason });
+                    return;
+                }
                 tracing::debug!(relay = %url, cell = %cell, error = %e, "relay unreachable");
             }
         }
@@ -473,6 +479,18 @@ async fn run(
             }
         }
         backoff = (backoff * 2).min(BACKOFF_MAX);
+    }
+}
+
+/// The reason to give up for good, from a connection error: a redirection
+/// of the WebSocket upgrade (R2), a refused TLS certificate (R1).
+pub fn permanent(error: &str) -> Option<String> {
+    if error.contains("HTTP error: 30") {
+        Some(format!("redirected (R2): {error}"))
+    } else if error.contains("invalid peer certificate") {
+        Some(format!("certificate refused (R1): {error}"))
+    } else {
+        None
     }
 }
 

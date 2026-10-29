@@ -138,3 +138,51 @@ async fn retries_with_the_feature_policy() {
         assert_eq!(p, Policy::CONSOLE);
     }
 }
+
+#[tokio::test]
+async fn a_redirection_is_final() {
+    // A web server that redirects the upgrade (R2), like
+    // treuzkas.branruz.com on 2026-10-27.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut s, _)) = listener.accept().await else {
+                return;
+            };
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut buf = [0u8; 1024];
+            let _ = s.read(&mut buf).await;
+            let _ = s
+                .write_all(b"HTTP/1.1 302 Found\r\nLocation: https://example.org/\r\nContent-Length: 0\r\n\r\n")
+                .await;
+        }
+    });
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let _conn = spawn(
+        format!("ws://127.0.0.1:{port}"),
+        "u0".into(),
+        vec![],
+        Arc::new(Loopback),
+        tx,
+        None,
+    );
+    let e = next(&mut rx, |e| {
+        matches!(
+            e,
+            RelayEvent::State {
+                state: ConnState::Abandoned { .. },
+                ..
+            }
+        )
+    })
+    .await;
+    let RelayEvent::State {
+        state: ConnState::Abandoned { reason },
+        ..
+    } = e
+    else {
+        unreachable!()
+    };
+    assert!(reason.starts_with("redirected (R2)"), "{reason}");
+}

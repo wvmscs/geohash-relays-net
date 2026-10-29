@@ -161,6 +161,12 @@ fn to_input(e: RelayEvent, dead: &mut HashMap<String, bool>) -> Option<Input> {
                 }
                 ConnState::Connecting => return None,
                 ConnState::Waiting { .. } => Health::Dead,
+                ConnState::Abandoned { reason } if reason.starts_with("redirected") => {
+                    Health::Redirect
+                }
+                ConnState::Abandoned { reason } if reason.starts_with("certificate") => {
+                    Health::BadCertificate
+                }
                 ConnState::Abandoned { reason } if reason.contains("auth") => Health::AuthRequired,
                 ConnState::Abandoned { .. } => Health::Dead,
             };

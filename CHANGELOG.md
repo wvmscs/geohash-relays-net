@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Added
+- Lot 4 (A6): a redirection (R2) or a refused certificate (R1) ends a connection for good
+  (`relay::permanent`), reported as `Health::Redirect` and `Health::BadCertificate`; the A6
+  prober through the runner (live delivery, then read-back).
 - `runner` (lot 2): runs a `geohash_relays::sansio` machine over the feature's relay
   connections; events verified (id, signature, tag limits) before they become inputs;
   publications on the relays the machine names; NIP-11 through `HttpFetch`. Tested with the A4
