@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 William VITAL, FR (wvmscs)
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+/target
+.DS_Store
+.env
+reuse.yml

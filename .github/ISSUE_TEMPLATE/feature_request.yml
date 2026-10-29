@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 William VITAL, FR (wvmscs)
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+name: Feature request
+description: A change or an addition.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: Need
+      description: What you want to do, and why the current behaviour is not enough.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: How it could work. Sources in the BitChat apps if relevant.

@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 William VITAL, FR (wvmscs)
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# geohash-relays is fetched over HTTPS. The git command line also uses the
+# user's credentials while a repository is still private.
+[net]
+git-fetch-with-cli = true
