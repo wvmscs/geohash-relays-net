@@ -4,11 +4,15 @@ Guidance for coding agents (and humans) working in this crate.
 
 ## What this is
 
-`geohash-relays-net`: the communication of the `geohash-relays` strategies (decision G12 of
-`../geohash-relays/PLAN_ET1.md`): connections to relays, relay lists, NIP-11 documents, and
+`geohash-relays-net`: the communication of the `geohash-relays` strategies (decision G12 in the
+`PLAN_ET1.md` of [geohash-relays](https://github.com/wvmscs/geohash-relays), branch `strategies`):
+connections to relays, relay lists, NIP-11 documents, and
 the runner of the strategy machines (`geohash_relays::sansio`). `geohash-relays` stays pure
 (no network) and proposable to the apps; everything that talks to the network is here, under
 GPL-3.0-or-later. bitchat-console uses it; `geohash-relays` never depends on it.
+
+Rules that only concern the author's local checkout, if any, are in `AGENTS.local.md`
+(not committed).
 
 ## Features
 
@@ -49,7 +53,8 @@ cargo deny --features console,arti check advisories licenses sources
 reuse lint
 ```
 
-While `geohash-relays` changes on its `strategies` branch, test against the local copy:
+While `geohash-relays` changes on its `strategies` branch, test against a checkout of it
+cloned next to this one:
 
 ```sh
 cargo test --features console \

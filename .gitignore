@@ -5,3 +5,5 @@
 .DS_Store
 .env
 reuse.yml
+# Rules of the author's local checkout (see AGENTS.md).
+/AGENTS.local.md

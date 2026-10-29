@@ -9,8 +9,7 @@ description = "Communication for the geohash-relays strategies: the bitchat, bit
 license = "GPL-3.0-or-later"
 repository = "https://github.com/wvmscs/geohash-relays-net"
 
-# Own workspace: the crate builds on its own, also inside the local `Nostr/`
-# directory, whose workspace does not list it.
+# Own workspace: the crate builds on its own, also inside another workspace.
 [workspace]
 
 [dependencies]
