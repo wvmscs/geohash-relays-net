@@ -57,7 +57,13 @@ async fn a_probe_writes_and_reads_back() {
     assert!(v.usable() && v.probed, "{v:?}");
     // Delivered live, not kept (the test relay keeps no ephemeral event):
     // R11 warns.
-    assert_eq!(v.warnings.iter().map(|w| w.requirement()).collect::<Vec<_>>(), ["R11"]);
+    assert_eq!(
+        v.warnings
+            .iter()
+            .map(|w| w.requirement())
+            .collect::<Vec<_>>(),
+        ["R11"]
+    );
     // The test relay has no NIP-11 document.
     assert!(p.nip11_of(&relay.url()).is_none());
 }

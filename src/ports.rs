@@ -11,6 +11,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use geohash_relays::params::comm::NIP11_TIMEOUT;
+
 use crate::connector::Connector;
 use crate::error::Result;
 
@@ -42,6 +44,14 @@ pub struct ConnectorFetch(pub Arc<dyn Connector>);
 
 impl HttpFetch for ConnectorFetch {
     fn nip11<'a>(&'a self, relay: &'a str) -> Fetching<'a> {
-        Box::pin(async move { crate::http::nip11(relay, relay, self.0.as_ref()).await })
+        Box::pin(async move {
+            // A server that never answers must not hold a place.
+            tokio::time::timeout(
+                NIP11_TIMEOUT,
+                crate::http::nip11(relay, relay, self.0.as_ref()),
+            )
+            .await
+            .unwrap_or(Ok(None))
+        })
     }
 }

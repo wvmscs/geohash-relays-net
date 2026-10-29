@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+- NIP-11 fetches give up after `NIP11_TIMEOUT` (20 s): some servers never answer and held a
+  place of the A6 prober (found by the real measurement of lot 9).
+
 ### Added
 - Lot 4 (A6): a redirection (R2) or a refused certificate (R1) ends a connection for good
   (`relay::permanent`), reported as `Health::Redirect` and `Health::BadCertificate`; the A6

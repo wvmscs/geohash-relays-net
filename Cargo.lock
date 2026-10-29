@@ -1406,7 +1406,7 @@ dependencies = [
 [[package]]
 name = "geohash-relays"
 version = "0.1.0"
-source = "git+https://github.com/wvmscs/geohash-relays.git?branch=strategies#6cb50bd7bb9156088e0434a482d4669ab48241d9"
+source = "git+https://github.com/wvmscs/geohash-relays.git?branch=strategies#9dbb661b32054107460018ec962fb25eb293b86e"
 dependencies = [
  "serde_json",
  "sha2",
