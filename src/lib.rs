@@ -37,6 +37,7 @@ pub mod lists;
 pub mod nostr;
 pub mod ports;
 pub mod relay;
+pub mod runner;
 
 pub use error::{Error, Result};
 

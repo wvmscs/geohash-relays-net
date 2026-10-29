@@ -3,6 +3,10 @@
 ## [Unreleased]
 
 ### Added
+- `runner` (lot 2): runs a `geohash_relays::sansio` machine over the feature's relay
+  connections; events verified (id, signature, tag limits) before they become inputs;
+  publications on the relays the machine names; NIP-11 through `HttpFetch`. Tested with the A4
+  republisher: two relay sets connected once, no loop between two republishers.
 - Crate skeleton (lot 0 of geohash-relays' `PLAN_ET1.md`): GPL-3.0-or-later, REUSE, CI for
   each feature, `cargo deny`, `SECURITY.md`, `CONTRIBUTING.md`.
 - Features `bitchat`, `bitchat-android`, `console`, exclusive; `arti`.

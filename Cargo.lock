@@ -1406,7 +1406,6 @@ dependencies = [
 [[package]]
 name = "geohash-relays"
 version = "0.1.0"
-source = "git+https://github.com/wvmscs/geohash-relays.git?branch=strategies#76543513b88f5733ff6509da44b40c325e4963ac"
 dependencies = [
  "thiserror 2.0.21",
 ]
