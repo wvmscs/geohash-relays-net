@@ -29,6 +29,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> Stream for T {}
 
 pub type BoxStream = Box<dyn Stream>;
 pub type Connecting<'a> = Pin<Box<dyn Future<Output = io::Result<BoxStream>> + Send + 'a>>;
+pub type Resolving<'a> = Pin<Box<dyn Future<Output = io::Result<Vec<IpAddr>>> + Send + 'a>>;
 
 /// Opens streams to relays.
 pub trait Connector: Send + Sync {
@@ -38,11 +39,32 @@ pub trait Connector: Send + Sync {
 
     /// For logs and the page: `"tor 127.0.0.1:9050"`, `"loopback (tests)"`.
     fn describe(&self) -> String;
+
+    /// The addresses of `host`, resolved where this connector resolves
+    /// names (through Tor: by the exit, never locally), on the circuit of
+    /// `isolation`. For the census's geolocation (lot 13).
+    fn resolve<'a>(&'a self, host: &'a str, isolation: &'a str) -> Resolving<'a> {
+        let _ = (host, isolation);
+        Box::pin(async {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "this connector does not resolve names",
+            ))
+        })
+    }
+}
+
+/// A literal address (`[v6]` too), without resolving anything.
+fn literal(host: &str) -> Option<IpAddr> {
+    host.trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse()
+        .ok()
 }
 
 /// Time allowed to reach the proxy and get its answer, Tor circuit included.
 pub use geohash_relays::params::comm::CONNECT_TIMEOUT;
-use geohash_relays::params::comm::PROXY_CHECK_TIMEOUT;
+use geohash_relays::params::comm::{PROXY_CHECK_TIMEOUT, RESOLVE_TIMEOUT};
 
 /// Tor (or any SOCKS5 proxy that isolates by user name) at `proxy`. Host
 /// names are resolved by Tor, never locally.
@@ -79,8 +101,23 @@ impl Socks5 {
     async fn open(&self, host: &str, port: u16, isolation: &str) -> io::Result<BoxStream> {
         let mut s = TcpStream::connect(self.proxy).await?;
         s.set_nodelay(true)?;
-        handshake(&mut s, host, port, isolation).await?;
+        handshake(&mut s, CONNECT, host, port, isolation).await?;
         Ok(Box::new(s))
+    }
+
+    /// Tor's `RESOLVE` extension of SOCKS5: the exit resolves the name.
+    async fn ask(&self, host: &str, isolation: &str) -> io::Result<Vec<IpAddr>> {
+        if let Some(ip) = literal(host) {
+            return Ok(vec![ip]);
+        }
+        let mut s = TcpStream::connect(self.proxy).await?;
+        match handshake(&mut s, TOR_RESOLVE, host, 0, isolation).await? {
+            Some(ip) => Ok(vec![ip]),
+            None => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "SOCKS5: no address in the answer",
+            )),
+        }
     }
 }
 
@@ -96,7 +133,20 @@ impl Connector for Socks5 {
     fn describe(&self) -> String {
         format!("tor {}", self.proxy)
     }
+
+    fn resolve<'a>(&'a self, host: &'a str, isolation: &'a str) -> Resolving<'a> {
+        Box::pin(async move {
+            tokio::time::timeout(RESOLVE_TIMEOUT, self.ask(host, isolation))
+                .await
+                .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "no answer through Tor"))?
+        })
+    }
 }
+
+/// SOCKS5 `CONNECT`.
+const CONNECT: u8 = 1;
+/// Tor's SOCKS5 extension: resolve a name (the port is ignored).
+const TOR_RESOLVE: u8 = 0xF0;
 
 /// SOCKS5 user name and password for an isolation key: Tor isolates streams
 /// whose credentials differ. Neither is a secret.
@@ -106,9 +156,17 @@ fn credentials(isolation: &str) -> (Vec<u8>, &'static [u8]) {
     (user, b"x")
 }
 
-/// RFC 1928 (SOCKS5) with RFC 1929 user name and password, `CONNECT` to a
-/// domain name (resolved by the proxy).
-async fn handshake(s: &mut TcpStream, host: &str, port: u16, isolation: &str) -> io::Result<()> {
+/// RFC 1928 (SOCKS5) with RFC 1929 user name and password, `command`
+/// ([`CONNECT`], or Tor's [`TOR_RESOLVE`]) for a domain name (resolved by
+/// the proxy). Returns the bound address of the answer: the address the
+/// name resolved to, for [`TOR_RESOLVE`].
+async fn handshake(
+    s: &mut TcpStream,
+    command: u8,
+    host: &str,
+    port: u16,
+    isolation: &str,
+) -> io::Result<Option<IpAddr>> {
     let bad = |what: &str| io::Error::new(io::ErrorKind::InvalidData, format!("SOCKS5: {what}"));
     s.write_all(&[5, 1, 2]).await?;
     let mut answer = [0u8; 2];
@@ -129,7 +187,7 @@ async fn handshake(s: &mut TcpStream, host: &str, port: u16, isolation: &str) ->
     if host.is_empty() || host.len() > 255 {
         return Err(bad("host name length"));
     }
-    let mut req = vec![5, 1, 0, 3, host.len() as u8];
+    let mut req = vec![5, command, 0, 3, host.len() as u8];
     req.extend_from_slice(host.as_bytes());
     req.extend_from_slice(&port.to_be_bytes());
     s.write_all(&req).await?;
@@ -144,8 +202,8 @@ async fn handshake(s: &mut TcpStream, host: &str, port: u16, isolation: &str) ->
             format!("SOCKS5: {}", reply_text(head[1])),
         ));
     }
-    // The bound address, unused.
-    let skip = match head[3] {
+    // The bound address (and port).
+    let len = match head[3] {
         1 => 4,
         4 => 16,
         3 => {
@@ -155,9 +213,17 @@ async fn handshake(s: &mut TcpStream, host: &str, port: u16, isolation: &str) ->
         }
         _ => return Err(bad("bound address type")),
     };
-    let mut rest = vec![0u8; skip + 2];
+    let mut rest = vec![0u8; len + 2];
     s.read_exact(&mut rest).await?;
-    Ok(())
+    Ok(match head[3] {
+        1 => Some(IpAddr::from(
+            <[u8; 4]>::try_from(&rest[..4]).expect("4 bytes"),
+        )),
+        4 => Some(IpAddr::from(
+            <[u8; 16]>::try_from(&rest[..16]).expect("16 bytes"),
+        )),
+        _ => None,
+    })
 }
 
 fn reply_text(code: u8) -> &'static str {
@@ -208,16 +274,32 @@ impl Connector for Loopback {
     fn describe(&self) -> String {
         "loopback (tests)".into()
     }
+
+    fn resolve<'a>(&'a self, host: &'a str, _isolation: &'a str) -> Resolving<'a> {
+        Box::pin(async move {
+            match literal(host) {
+                Some(ip) if ip.is_loopback() => Ok(vec![ip]),
+                _ if host.eq_ignore_ascii_case("localhost") => {
+                    Ok(vec![IpAddr::from([127, 0, 0, 1])])
+                }
+                _ => Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("{host} is not a loopback address"),
+                )),
+            }
+        })
+    }
 }
 
 /// Direct TCP connections, without Tor, as the apps make when the user
 /// turns Tor off (`userTorEnabled`, `TorMode`). Features `bitchat` and
-/// `bitchat-android` only: the console never connects in clear.
-#[cfg(any(feature = "bitchat", feature = "bitchat-android"))]
+/// `bitchat-android`, and `census` on request (`--direct`): the console
+/// never connects in clear.
+#[cfg(any(feature = "bitchat", feature = "bitchat-android", feature = "census"))]
 #[derive(Debug, Clone, Default)]
 pub struct Direct;
 
-#[cfg(any(feature = "bitchat", feature = "bitchat-android"))]
+#[cfg(any(feature = "bitchat", feature = "bitchat-android", feature = "census"))]
 impl Connector for Direct {
     fn connect<'a>(&'a self, host: &'a str, port: u16, _isolation: &'a str) -> Connecting<'a> {
         Box::pin(async move {
@@ -231,6 +313,18 @@ impl Connector for Direct {
 
     fn describe(&self) -> String {
         "direct (no Tor)".into()
+    }
+
+    fn resolve<'a>(&'a self, host: &'a str, _isolation: &'a str) -> Resolving<'a> {
+        Box::pin(async move {
+            if let Some(ip) = literal(host) {
+                return Ok(vec![ip]);
+            }
+            let found = tokio::time::timeout(RESOLVE_TIMEOUT, tokio::net::lookup_host((host, 0)))
+                .await
+                .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "no DNS answer"))??;
+            Ok(found.map(|a| a.ip()).collect())
+        })
     }
 }
 

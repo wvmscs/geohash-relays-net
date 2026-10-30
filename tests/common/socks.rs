@@ -3,15 +3,20 @@
 
 //! A SOCKS5 proxy for tests (RFC 1928 + 1929): records the user name, host
 //! and port of each `CONNECT`, then connects to the host itself (tests only
-//! use local targets) and copies bytes both ways.
+//! use local targets) and copies bytes both ways. Tor's `RESOLVE` (0xF0)
+//! answers [`RESOLVED`] for any name.
 
 use std::sync::{Arc, Mutex};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-/// What one `CONNECT` asked for: (user name, host, port).
+/// What one `CONNECT` (or `RESOLVE`, port 0) asked for: (user name, host,
+/// port).
 pub type Request = (String, String, u16);
+
+/// The address `RESOLVE` gives (TEST-NET-3).
+pub const RESOLVED: [u8; 4] = [203, 0, 113, 7];
 
 pub struct TestSocks {
     pub addr: std::net::SocketAddr,
@@ -64,7 +69,10 @@ async fn serve(mut s: TcpStream, log: Arc<Mutex<Vec<Request>>>) -> std::io::Resu
     s.write_all(&[1, 0]).await?;
     let mut req = [0u8; 5];
     s.read_exact(&mut req).await?;
-    assert_eq!(&req[..4], &[5, 1, 0, 3], "CONNECT to a domain name");
+    assert!(
+        req[0] == 5 && [1, 0xf0].contains(&req[1]) && req[2..4] == [0, 3],
+        "CONNECT or RESOLVE of a domain name"
+    );
     let mut host = vec![0u8; req[4] as usize];
     s.read_exact(&mut host).await?;
     let mut port = [0u8; 2];
@@ -73,6 +81,12 @@ async fn serve(mut s: TcpStream, log: Arc<Mutex<Vec<Request>>>) -> std::io::Resu
     log.lock()
         .unwrap()
         .push((String::from_utf8(user).unwrap(), host.clone(), port));
+    if req[1] == 0xf0 {
+        let mut answer = vec![5, 0, 0, 1];
+        answer.extend_from_slice(&RESOLVED);
+        answer.extend_from_slice(&[0, 0]);
+        return s.write_all(&answer).await;
+    }
     match TcpStream::connect((host.as_str(), port)).await {
         Ok(mut target) => {
             s.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await?;

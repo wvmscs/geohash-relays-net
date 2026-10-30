@@ -46,10 +46,10 @@ All three wait for `OK`, answer `AUTH` (NIP-42) and read `CLOSED`, which the app
 
 ```sh
 cargo fmt --check
-for f in bitchat bitchat-android console; do
+for f in bitchat bitchat-android console console,census; do
   cargo clippy --all-targets --features $f -- -D warnings && cargo test --features $f
 done
-cargo deny --features console,arti check advisories licenses sources
+cargo deny --features console,arti,census check advisories licenses sources
 reuse lint
 ```
 

@@ -1,0 +1,266 @@
+// SPDX-FileCopyrightText: 2026 William VITAL, FR (wvmscs)
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! Census of relays (feature `census`, lot 13 of geohash-relays, G15), run
+//! by `relay-census`:
+//!
+//! * relays given by hand ([`Store::give`]);
+//! * [`refresh`]: rounds of [`geohash_relays::census::Crawler`] over the
+//!   relays known, then over the new ones the relay lists (NIP-65) named,
+//!   until none is new; then, for every relay read, its place ([`geo`]) and
+//!   its A6 qualification ([`crate::qualify`]: NIP-11, and a write test on
+//!   request);
+//! * [`bitchat_csv`]: the relays the apps can use, as their lists give them.
+
+pub mod geo;
+pub mod store;
+
+use std::collections::BTreeSet;
+use std::io::Write;
+use std::sync::Arc;
+use std::time::Duration;
+
+use geohash_relays::census::Crawler;
+use geohash_relays::params::{CENSUS_CONCURRENCY, CENSUS_TIMEOUT_SECS};
+use tokio::sync::{Semaphore, watch};
+use tokio::task::JoinSet;
+
+pub use geo::{GeoIp, Place};
+pub use store::{Listed, Store, Summary};
+
+use crate::connector::Connector;
+use crate::error::Result;
+use crate::nostr::unix_now;
+use crate::ports::SystemClock;
+use crate::relay::host_port;
+use crate::runner::Runner;
+
+/// How a refresh goes.
+#[derive(Debug, Clone)]
+pub struct Refresh {
+    /// Rounds at most.
+    pub rounds: usize,
+    /// Write and read back a test event on each relay that answered (a real
+    /// publication: only on the user's request).
+    pub probe: bool,
+}
+
+/// What a refresh did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Report {
+    /// Per round: relays read, answered, valid lists, new relays named.
+    pub rounds: Vec<Round>,
+    pub located: usize,
+    pub qualified: usize,
+    /// The qualification ended within its time limit.
+    pub qualification_complete: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Round {
+    pub read: usize,
+    pub answered: usize,
+    pub lists: usize,
+    pub new: usize,
+}
+
+/// Rounds over the relays known, then over the new ones, until none is new
+/// or `rounds` is reached; then places and qualifications of the relays
+/// read. `geoip`: none, no places.
+pub async fn refresh(
+    store: &mut Store,
+    connector: Arc<dyn Connector>,
+    geoip: Option<&GeoIp>,
+    how: &Refresh,
+) -> Result<Report> {
+    let mut report = Report::default();
+    let mut to_read = store.relays()?;
+    let mut read = BTreeSet::new();
+    for n in 1..=how.rounds {
+        if to_read.is_empty() {
+            break;
+        }
+        let crawler = round(to_read.clone(), connector.clone()).await;
+        let now = unix_now();
+        let mut answered = 0;
+        for (url, outcome) in crawler.outcomes() {
+            store.crawled(url, outcome, now)?;
+            answered += usize::from(matches!(
+                outcome,
+                geohash_relays::census::Outcome::Answered { .. }
+            ));
+        }
+        for list in crawler.lists() {
+            store.list(list, now)?;
+        }
+        read.extend(to_read.iter().cloned());
+        let new = store.found(crawler.named(), now)?;
+        let r = Round {
+            read: to_read.len(),
+            answered,
+            lists: crawler.lists().count(),
+            new: new.len(),
+        };
+        tracing::info!(
+            round = n,
+            read = r.read,
+            answered = r.answered,
+            lists = r.lists,
+            new = r.new,
+            "census round"
+        );
+        report.rounds.push(r);
+        to_read = new;
+    }
+    // The relays that answered this time: their place and their verdict.
+    let answered: Vec<String> = store
+        .answered()?
+        .into_iter()
+        .filter(|u| read.contains(u))
+        .collect();
+    if let Some(geoip) = geoip {
+        report.located = locate(store, connector.clone(), geoip, &answered).await?;
+    }
+    let limit = Duration::from_secs(
+        (CENSUS_TIMEOUT_SECS as u64) * (answered.len() as u64 / CENSUS_CONCURRENCY as u64 + 2) * 2,
+    );
+    let (prober, complete) =
+        crate::qualify::run(answered.clone(), connector, how.probe, limit).await;
+    let q = prober.qualification();
+    let now = unix_now();
+    for url in &answered {
+        if let Some(v) = q.verdicts.get(url) {
+            store.qualified(url, prober.nip11_of(url).is_some(), v, now)?;
+            report.qualified += 1;
+        }
+    }
+    report.qualification_complete = complete;
+    Ok(report)
+}
+
+/// One round: the relay lists of `relays`, until every relay has answered,
+/// failed or been left.
+async fn round(relays: Vec<String>, connector: Arc<dyn Connector>) -> Crawler {
+    let runner = Runner {
+        connector,
+        clock: Arc::new(SystemClock),
+        fetch: None,
+        isolation: "census".into(),
+        tick: Duration::from_secs(1),
+    };
+    // Each relay has CENSUS_TIMEOUT_SECS, CENSUS_CONCURRENCY at a time.
+    let limit = Duration::from_secs(
+        (CENSUS_TIMEOUT_SECS as u64) * (relays.len() as u64 / CENSUS_CONCURRENCY as u64 + 2),
+    );
+    let (stop, stop_rx) = watch::channel(false);
+    let timeout = stop.clone();
+    let timer = tokio::spawn(async move {
+        tokio::time::sleep(limit).await;
+        let _ = timeout.send(true);
+    });
+    let crawler = runner
+        .run(Crawler::new(relays), stop_rx, move |c: &Crawler| {
+            if c.done() {
+                let _ = stop.send(true);
+            }
+        })
+        .await;
+    timer.abort();
+    crawler
+}
+
+/// Resolves each relay's host through the connector (Tor: by the exit) and
+/// places it. Returns how many were placed.
+async fn locate(
+    store: &Store,
+    connector: Arc<dyn Connector>,
+    geoip: &GeoIp,
+    relays: &[String],
+) -> Result<usize> {
+    let gate = Arc::new(Semaphore::new(CENSUS_CONCURRENCY));
+    let mut tasks = JoinSet::new();
+    for url in relays {
+        let (url, connector, gate) = (url.clone(), connector.clone(), gate.clone());
+        tasks.spawn(async move {
+            let _turn = gate.acquire_owned().await;
+            let addresses = match host_port(&url) {
+                Some((host, _)) if host.ends_with(".onion") => Err("onion: no place".to_owned()),
+                Some((host, _)) => connector
+                    .resolve(&host, &host)
+                    .await
+                    .map_err(|e| e.to_string()),
+                None => Err("not a relay address".to_owned()),
+            };
+            (url, addresses)
+        });
+    }
+    let now = unix_now();
+    let mut placed = 0;
+    while let Some(done) = tasks.join_next().await {
+        let Ok((url, addresses)) = done else { continue };
+        match addresses.map(|a| geoip.locate(&a)) {
+            Ok(Some(place)) => {
+                store.located(&url, &place, now)?;
+                placed += 1;
+            }
+            Ok(None) => store.not_located(&url, "address not in the geolocation file", now)?,
+            Err(why) => store.not_located(&url, &why, now)?,
+        }
+    }
+    Ok(placed)
+}
+
+/// The relays the BitChat apps can use, in their lists' CSV form
+/// (`Relay URL,Latitude,Longitude`, a host per line). Returns how many.
+pub fn bitchat_csv(store: &Store, out: &mut impl Write) -> Result<usize> {
+    let relays = store.bitchat()?;
+    writeln!(out, "Relay URL,Latitude,Longitude")?;
+    for r in &relays {
+        writeln!(out, "{},{:.4},{:.4}", r.host, r.lat, r.lon)?;
+    }
+    Ok(relays.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use geohash_relays::a6::Verdict;
+    use geohash_relays::census::Outcome;
+
+    #[test]
+    fn csv_as_the_apps_read_it() {
+        let s = Store::open_in_memory().unwrap();
+        s.give(&["wss://relay.example.org".into()], 1).unwrap();
+        s.crawled(
+            "wss://relay.example.org",
+            &Outcome::Answered { lists: 1 },
+            2,
+        )
+        .unwrap();
+        s.located(
+            "wss://relay.example.org",
+            &Place {
+                ip: "203.0.113.7".parse().unwrap(),
+                lat: 40.705_71,
+                lon: -74.013_62,
+                country: Some("US".into()),
+                city: None,
+                geohash: "dr5reg".into(),
+            },
+            3,
+        )
+        .unwrap();
+        s.qualified("wss://relay.example.org", true, &Verdict::default(), 4)
+            .unwrap();
+        let mut out = Vec::new();
+        assert_eq!(bitchat_csv(&s, &mut out).unwrap(), 1);
+        let text = String::from_utf8(out).unwrap();
+        assert_eq!(
+            text,
+            "Relay URL,Latitude,Longitude\nrelay.example.org,40.7057,-74.0136\n"
+        );
+        // The apps' own parser reads it.
+        let ios = geohash_relays::RelayDirectory::parse(&text, geohash_relays::Platform::Ios);
+        assert_eq!(ios.relays()[0].url, "wss://relay.example.org");
+    }
+}

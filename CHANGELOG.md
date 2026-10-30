@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+- Census of relays (feature `census`, lot 13 of geohash-relays, G15): the binary
+  `relay-census` (`--set`, `--refresh`, `--compat bitchat`) and its SQLite base; rounds of
+  `geohash_relays::census::Crawler` (NIP-65 relay lists) until no relay is new; places from an
+  offline IP geolocation file (DB-IP Lite, GeoLite2; `maxminddb`); A6 qualification, with a
+  write test on request (`--probe`); the apps' CSV list of usable relays.
+- `Connector::resolve`: host names resolved where the connector resolves them (Tor's SOCKS5
+  `RESOLVE`, Arti, the system for `Direct`, loopback for tests).
+- `qualify::run`: the A6 run, moved from bitchat-console, for it and the census.
+- `Direct` also with the feature `census` (`relay-census --direct`).
+
 ### Fixed
 - NIP-11 fetches give up after `NIP11_TIMEOUT` (20 s): some servers never answer and held a
   place of the A6 prober (found by the real measurement of lot 9).

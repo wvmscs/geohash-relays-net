@@ -17,6 +17,12 @@ pub enum Error {
     NoRelayList { platform: String, reason: String },
     #[error("HTTP: {0}")]
     Http(String),
+    /// The census base (feature `census`).
+    #[error("census base: {0}")]
+    Db(String),
+    /// The IP geolocation file (feature `census`).
+    #[error("IP geolocation: {0}")]
+    GeoIp(String),
     #[error(transparent)]
     Strategy(#[from] geohash_relays::Error),
     #[error("I/O error: {0}")]

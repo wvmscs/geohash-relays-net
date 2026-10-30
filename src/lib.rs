@@ -30,12 +30,15 @@ compile_error!("enable one of the features `bitchat`, `bitchat-android`, `consol
 
 #[cfg(feature = "arti")]
 pub mod arti;
+#[cfg(feature = "census")]
+pub mod census;
 pub mod connector;
 mod error;
 pub mod http;
 pub mod lists;
 pub mod nostr;
 pub mod ports;
+pub mod qualify;
 pub mod relay;
 pub mod runner;
 

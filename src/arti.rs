@@ -16,7 +16,7 @@ use arti_client::config::TorClientConfigBuilder;
 use arti_client::{IsolationToken, StreamPrefs, TorClient};
 use tor_rtcompat::PreferredRuntime;
 
-use crate::connector::{BoxStream, Connecting, Connector};
+use crate::connector::{BoxStream, Connecting, Connector, Resolving};
 use crate::error::{Error, Result};
 
 pub struct Arti {
@@ -72,5 +72,18 @@ impl Connector for Arti {
 
     fn describe(&self) -> String {
         "tor (arti, in the binary)".into()
+    }
+
+    fn resolve<'a>(&'a self, host: &'a str, isolation: &'a str) -> Resolving<'a> {
+        Box::pin(async move {
+            let prefs = self.prefs(isolation);
+            tokio::time::timeout(
+                geohash_relays::params::comm::RESOLVE_TIMEOUT,
+                self.client.resolve_with_prefs(host, &prefs),
+            )
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "no answer through Tor"))?
+            .map_err(|e| io::Error::other(e.to_string()))
+        })
     }
 }

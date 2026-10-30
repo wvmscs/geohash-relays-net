@@ -30,6 +30,13 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 # Tor in the binary (feature `arti`), like the iOS app.
 arti-client = { version = "0.47", optional = true, default-features = false, features = ["tokio", "rustls", "compression"] }
 tor-rtcompat = { version = "0.47", optional = true, default-features = false, features = ["tokio", "rustls"] }
+# Census of relays (feature `census`, lot 13 of geohash-relays): its SQLite
+# base (0.40, the range Arti accepts: one sqlite3 linked), and the offline
+# IP geolocation (DB-IP Lite or GeoLite2 files, MaxMind DB format).
+rusqlite = { version = "0.40", optional = true, features = ["bundled"] }
+maxminddb = { version = "0.32", optional = true }
+# Logs of `relay-census`.
+tracing-subscriber = { version = "0.3", optional = true }
 
 
 [features]
@@ -40,3 +47,11 @@ bitchat-android = []
 console = []
 # Tor inside the process (Arti), with any of them.
 arti = ["dep:arti-client", "dep:tor-rtcompat"]
+# The census of relays and its binary `relay-census` (NIP-65, A6, IP
+# geolocation, SQLite); direct connections allowed on request (`--direct`).
+census = ["dep:rusqlite", "dep:maxminddb", "dep:tracing-subscriber"]
+
+[[bin]]
+name = "relay-census"
+path = "src/bin/relay-census.rs"
+required-features = ["census", "console"]

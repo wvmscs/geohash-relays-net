@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::socks::{TestSocks, echo};
+use common::socks::{RESOLVED, TestSocks, echo};
 use geohash_relays_net::Error;
 use geohash_relays_net::connector::{Connector, Loopback, Socks5};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -92,4 +92,30 @@ async fn loopback_never_leaves_the_machine() {
         Ok(_) => panic!("clear connection to a real relay"),
     };
     assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+}
+
+#[tokio::test]
+async fn names_resolved_by_tor() {
+    let proxy = TestSocks::spawn().await;
+    let tor = Socks5::new(proxy.addr);
+    let ips = tor.resolve("relay.example.org", "census").await.unwrap();
+    assert_eq!(ips, [std::net::IpAddr::from(RESOLVED)]);
+    // Through the proxy, by name, on the circuit of the key.
+    assert_eq!(
+        proxy.requests(),
+        [(
+            "bitchat-console/census".to_owned(),
+            "relay.example.org".to_owned(),
+            0
+        )]
+    );
+    // A literal address needs no question.
+    assert_eq!(
+        tor.resolve("[2001:db8::1]", "census").await.unwrap(),
+        ["2001:db8::1".parse::<std::net::IpAddr>().unwrap()]
+    );
+    assert_eq!(proxy.requests().len(), 1);
+    // The loopback connector resolves only loopback names.
+    assert!(Loopback.resolve("localhost", "x").await.unwrap()[0].is_loopback());
+    assert!(Loopback.resolve("relay.example.org", "x").await.is_err());
 }
