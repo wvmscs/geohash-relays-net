@@ -233,7 +233,7 @@ mod tests {
             relay("wss://path.example.org/x", true, "", Some((48.8, 2.3))),
         ];
         let lines = diff(&relays, &app);
-        assert_eq!(lines.len(), 5);
+        assert_eq!(lines.len(), 6);
         assert!(
             matches!(&lines[0], Line::Both { host, km } if host == "both.example.org" && *km < 2.0)
         );
@@ -241,7 +241,7 @@ mod tests {
             lines[1],
             Line::OnlyList {
                 host: "dead.example.org".into(),
-                why: "did not answer (dead)".into()
+                why: "did not answer: dead".into()
             }
         );
         assert_eq!(
@@ -251,15 +251,23 @@ mod tests {
                 place: "Paris FR".into()
             }
         );
+        // A path is kept by the common rule.
         assert_eq!(
             lines[3],
-            Line::OnlyList {
-                host: "refused.example.org".into(),
-                why: "refused: R5 AuthRequired".into()
+            Line::OnlyCensus {
+                host: "path.example.org/x".into(),
+                place: "Paris FR".into()
             }
         );
         assert_eq!(
             lines[4],
+            Line::OnlyList {
+                host: "refused.example.org".into(),
+                why: "refused (A6): R5 AuthRequired".into()
+            }
+        );
+        assert_eq!(
+            lines[5],
             Line::OnlyList {
                 host: "unknown.example.org".into(),
                 why: "unknown to the census".into()
@@ -270,7 +278,7 @@ mod tests {
             "--- android list (android.csv, 2 h old, 5 relays)\n+++ relay-census (test)\n"
         ));
         assert!(
-            text.contains("\n-dead.example.org     did not answer (dead)\n"),
+            text.contains("\n-dead.example.org     did not answer: dead\n"),
             "{text}"
         );
         assert!(
@@ -278,7 +286,7 @@ mod tests {
             "{text}"
         );
         assert!(text.ends_with(
-            "@@ 3 in the list only (1 unknown to the census), 1 usable for the census only, 1 in both\n"
+            "@@ 3 in the list only (1 unknown to the census), 2 usable for the census only, 1 in both\n"
         ));
     }
 

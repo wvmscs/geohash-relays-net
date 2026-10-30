@@ -11,19 +11,23 @@
 //!   time, its place ([`geo`]) and its A6 qualification ([`crate::qualify`]:
 //!   NIP-11, and a write test on request);
 //! * [`bitchat_csv`]: the relays the apps can use, as their lists give them;
-//! * [`legacy`]: the census against the apps' own lists.
+//! * [`legacy`]: the census against the apps' own lists;
+//! * [`eligibility`]: for each strategy, the relays it can use and the ones
+//!   it leaves out, by reason (a comparison criterion of the strategies).
 
 pub mod geo;
 pub mod legacy;
 pub mod store;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
-use geohash_relays::census::Crawler;
+use geohash_relays::census::{Crawler, Exclusion, STRATEGIES};
 use geohash_relays::params::{CENSUS_CONCURRENCY, CENSUS_TIMEOUT_SECS};
+use geohash_relays::strategy::Needs;
 use tokio::sync::{Semaphore, watch};
 use tokio::task::JoinSet;
 
@@ -218,8 +222,73 @@ async fn locate(connector: Arc<dyn Connector>, geoip: &GeoIp, relays: &[String])
     placed
 }
 
+/// The relays a strategy can use, and the ones it leaves out by reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Eligibility {
+    pub strategy: &'static str,
+    pub needs: Needs,
+    pub usable: usize,
+    pub excluded: BTreeMap<Exclusion, usize>,
+}
+
+/// For each strategy that chooses relays ([`STRATEGIES`]).
+pub fn eligibility(relays: &[Relay]) -> Vec<Eligibility> {
+    STRATEGIES
+        .iter()
+        .map(|(strategy, needs)| {
+            let mut e = Eligibility {
+                strategy,
+                needs: *needs,
+                usable: 0,
+                excluded: BTreeMap::new(),
+            };
+            for r in relays {
+                match r.excluded(*needs) {
+                    None => e.usable += 1,
+                    Some((why, _)) => *e.excluded.entry(why).or_default() += 1,
+                }
+            }
+            e
+        })
+        .collect()
+}
+
+/// The eligibility as a Markdown table, one line per strategy.
+pub fn render_eligibility(rows: &[Eligibility], total: usize) -> String {
+    let reasons = [
+        Exclusion::NeverRead,
+        Exclusion::NoAnswer,
+        Exclusion::NotQualified,
+        Exclusion::Refused,
+        Exclusion::Clear,
+        Exclusion::NoPlace,
+    ];
+    let mut out = format!("{total} relays in the census.\n\n| Strategy | Needs a place | Usable |");
+    for r in reasons {
+        let _ = write!(out, " {} |", r.describe());
+    }
+    out.push_str("\n|---|---|---|");
+    out.push_str(&"---|".repeat(reasons.len()));
+    out.push('\n');
+    for e in rows {
+        let _ = write!(
+            out,
+            "| {} | {} | {} |",
+            e.strategy,
+            if e.needs.place { "yes" } else { "no" },
+            e.usable
+        );
+        for r in reasons {
+            let _ = write!(out, " {} |", e.excluded.get(&r).copied().unwrap_or(0));
+        }
+        out.push('\n');
+    }
+    out
+}
+
 /// The relays the BitChat apps can use, in their lists' CSV form
-/// (`Relay URL,Latitude,Longitude`, a host per line). Returns how many.
+/// (`Relay URL,Latitude,Longitude`, an address without `wss://` per line),
+/// for the harmonised apps: [`Relay::bitchat`]. Returns how many.
 pub fn bitchat_csv(store: &Store, out: &mut impl Write) -> Result<usize> {
     let relays = store.bitchat()?;
     writeln!(out, "Relay URL,Latitude,Longitude")?;
@@ -234,6 +303,45 @@ mod tests {
     use super::*;
     use geohash_relays::a6::Verdict;
     use geohash_relays::census::Outcome;
+
+    #[test]
+    fn what_each_strategy_can_use() {
+        let relay = |url: &str, placed: bool| Relay {
+            url: url.into(),
+            answered: Some(true),
+            failure: None,
+            place: placed.then_some((1.0, 2.0)),
+            city: None,
+            country: None,
+            locate_error: None,
+            qualified: true,
+            refusals: Some(String::new()),
+        };
+        let relays = [
+            relay("wss://placed.example.org", true),
+            relay("wss://abcdefghijklmnop.onion", false),
+            Relay {
+                answered: Some(false),
+                ..relay("wss://dead.example.org", true)
+            },
+        ];
+        let rows = eligibility(&relays);
+        let of = |name: &str| rows.iter().find(|e| e.strategy == name).unwrap();
+        assert_eq!(of("AS").usable, 1);
+        assert_eq!(of("AS").excluded[&Exclusion::NoPlace], 1);
+        assert_eq!(of("A1").usable, 2);
+        assert!(!of("A1").excluded.contains_key(&Exclusion::NoPlace));
+        assert_eq!(of("A1").excluded[&Exclusion::NoAnswer], 1);
+        let table = render_eligibility(&rows, relays.len());
+        assert!(
+            table.contains("| AS | yes | 1 | 0 | 1 | 0 | 0 | 0 | 1 |"),
+            "{table}"
+        );
+        assert!(
+            table.contains("| A1 | no | 2 | 0 | 1 | 0 | 0 | 0 | 0 |"),
+            "{table}"
+        );
+    }
 
     #[test]
     fn csv_as_the_apps_read_it() {

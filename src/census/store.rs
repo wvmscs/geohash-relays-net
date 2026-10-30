@@ -8,8 +8,9 @@
 use std::path::Path;
 
 use geohash_relays::a6::{Finding, Verdict};
-use geohash_relays::census::{Outcome, RelayList};
+use geohash_relays::census::{Candidate, Exclusion, Outcome, RelayList, exclusion};
 use geohash_relays::strategy::Health;
+use geohash_relays::strategy::Needs;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::geo::Place;
@@ -100,42 +101,49 @@ pub struct Relay {
 }
 
 impl Relay {
-    /// Its line in the apps' lists, or why it has none: `wss://` on port 443
-    /// with no path (R1, R4: the apps add `wss://` to a host), not `.onion`
-    /// (no place), answered its last reading, placed, and qualified without
-    /// any refusal (A6: R1, R2, R5, R6, R7, R9).
-    pub fn bitchat(&self) -> std::result::Result<Listed, String> {
-        let host = self
-            .url
-            .strip_prefix("wss://")
-            .filter(|h| !h.contains([':', '/']) && !h.ends_with(".onion"))
-            .ok_or("not a wss:// host on port 443 (R1, R4)")?;
-        match self.answered {
-            None => return Err("never read".into()),
-            Some(false) => {
-                return Err(format!(
-                    "did not answer ({})",
-                    self.failure.as_deref().unwrap_or("?")
-                ));
-            }
-            Some(true) => {}
+    /// What a strategy cares about.
+    pub fn candidate(&self) -> Candidate<'_> {
+        Candidate {
+            url: &self.url,
+            answered: self.answered,
+            qualified: self.qualified,
+            refused: self.refusals.as_deref().is_some_and(|r| !r.is_empty()),
+            placed: self.place.is_some(),
         }
-        if !self.qualified {
-            return Err("not qualified yet".into());
-        }
-        if let Some(r) = self.refusals.as_deref().filter(|r| !r.is_empty()) {
-            return Err(format!("refused: {r}"));
-        }
-        let (lat, lon) = self.place.ok_or_else(|| {
-            format!(
-                "not placed ({})",
+    }
+
+    /// Why a strategy with these `needs` cannot use it, with the details
+    /// the base has; `None`: it can.
+    pub fn excluded(&self, needs: Needs) -> Option<(Exclusion, String)> {
+        let e = exclusion(&self.candidate(), needs)?;
+        let detail = match e {
+            Exclusion::NoAnswer => self.failure.clone(),
+            Exclusion::Refused => self.refusals.clone(),
+            Exclusion::NoPlace => Some(
                 self.locate_error
-                    .as_deref()
-                    .unwrap_or("no geolocation file")
-            )
-        })?;
+                    .clone()
+                    .unwrap_or_else(|| "no geolocation file".into()),
+            ),
+            _ => None,
+        };
+        let text = match detail {
+            Some(d) => format!("{}: {d}", e.describe()),
+            None => e.describe().to_owned(),
+        };
+        Some((e, text))
+    }
+
+    /// Its line in the relay list of the harmonised apps (the common rule,
+    /// a strategy by distance: [`geohash_relays::as_::NEEDS`]), or why it
+    /// has none. The address without `wss://` (port and path kept, as
+    /// [`geohash_relays::normalize_url`] keeps them).
+    pub fn bitchat(&self) -> std::result::Result<Listed, String> {
+        if let Some((_, why)) = self.excluded(geohash_relays::as_::NEEDS) {
+            return Err(why);
+        }
+        let (lat, lon) = self.place.ok_or("no place")?;
         Ok(Listed {
-            host: host.to_owned(),
+            host: self.url.trim_start_matches("wss://").to_owned(),
             lat,
             lon,
         })
@@ -540,23 +548,44 @@ mod tests {
                 Outcome::Answered { lists: 0 }
             };
             s.crawled(u, &outcome, 2).unwrap();
-            if !u.contains("unplaced") {
+            // An onion has no address to locate.
+            if !u.contains("unplaced") && !u.ends_with(".onion") {
                 s.located(u, &place, 3).unwrap();
             }
             let v = if u.contains("refused") { &refused } else { &ok };
             s.qualified(u, false, v, 4).unwrap();
         }
-        let listed = s.bitchat().unwrap();
+        // The common rule keeps ports and paths; no ws://, no place, no
+        // answer or a refusal leave a relay out of a list ranked by distance.
+        let hosts: Vec<String> = s.bitchat().unwrap().into_iter().map(|l| l.host).collect();
         assert_eq!(
-            listed,
-            [Listed {
-                host: "good.example.org".into(),
-                lat: 48.8566,
-                lon: 2.3522
-            }]
+            hosts,
+            [
+                "good.example.org",
+                "path.example.org/nostr",
+                "port.example.org:7777"
+            ]
         );
+        let relays = s.all().unwrap();
+        let why = |url: &str| {
+            relays
+                .iter()
+                .find(|r| r.url == url)
+                .unwrap()
+                .excluded(geohash_relays::as_::NEEDS)
+                .map(|(e, _)| e)
+        };
+        assert_eq!(
+            why("wss://abcdefghijklmnop.onion"),
+            Some(Exclusion::NoPlace)
+        );
+        assert_eq!(why("ws://clear.example.org"), Some(Exclusion::Clear));
+        assert_eq!(why("wss://silent.example.org"), Some(Exclusion::NoAnswer));
+        // A strategy that does not rank by distance keeps the onion.
+        let onion = relays.iter().find(|r| r.url.ends_with(".onion")).unwrap();
+        assert!(onion.excluded(geohash_relays::a1::NEEDS).is_none());
         let sum = s.summary().unwrap();
-        assert_eq!((sum.answered, sum.located, sum.usable), (7, 7, 7));
+        assert_eq!((sum.answered, sum.located, sum.usable), (7, 6, 7));
     }
 
     #[test]
