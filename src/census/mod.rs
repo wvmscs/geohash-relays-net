@@ -10,9 +10,11 @@
 //!   until none is new; then, for every relay that answered, at the same
 //!   time, its place ([`geo`]) and its A6 qualification ([`crate::qualify`]:
 //!   NIP-11, and a write test on request);
-//! * [`bitchat_csv`]: the relays the apps can use, as their lists give them.
+//! * [`bitchat_csv`]: the relays the apps can use, as their lists give them;
+//! * [`legacy`]: the census against the apps' own lists.
 
 pub mod geo;
+pub mod legacy;
 pub mod store;
 
 use std::collections::BTreeSet;
@@ -26,7 +28,7 @@ use tokio::sync::{Semaphore, watch};
 use tokio::task::JoinSet;
 
 pub use geo::{GeoIp, Place};
-pub use store::{Listed, Store, Summary};
+pub use store::{Listed, Relay, Store, Summary};
 
 use crate::connector::Connector;
 use crate::error::Result;

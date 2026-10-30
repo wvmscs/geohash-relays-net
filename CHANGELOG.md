@@ -9,6 +9,10 @@
   offline IP geolocation file (DB-IP Lite, GeoLite2; `maxminddb`); A6 qualification, with a
   write test on request (`--probe`); the apps' CSV list of usable relays. Places and
   qualifications run at the same time (`tokio::join!`), each 16 at a time.
+- `relay-census --legacy` (`census::legacy`): the census against the apps' own lists (iOS,
+  Android), a diff by server with the reasons; the lists from local copies younger than 24 h,
+  else downloaded through the connector (`--lists-dir`). `Store::all`, `Relay::bitchat` (one
+  rule for `--compat` and `--legacy`).
 - `Connector::resolve`: host names resolved where the connector resolves them (Tor's SOCKS5
   `RESOLVE`, Arti, the system for `Direct`, loopback for tests).
 - `qualify::run`: the A6 run, moved from bitchat-console, for it and the census.

@@ -82,6 +82,75 @@ pub struct Listed {
     pub lon: f64,
 }
 
+/// A relay as the base knows it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Relay {
+    pub url: String,
+    /// Its last reading: answered or not; never read.
+    pub answered: Option<bool>,
+    pub failure: Option<String>,
+    /// Latitude, longitude.
+    pub place: Option<(f64, f64)>,
+    pub city: Option<String>,
+    pub country: Option<String>,
+    pub locate_error: Option<String>,
+    pub qualified: bool,
+    /// Requirements refused (`R5 AuthRequired; …`), empty when none.
+    pub refusals: Option<String>,
+}
+
+impl Relay {
+    /// Its line in the apps' lists, or why it has none: `wss://` on port 443
+    /// with no path (R1, R4: the apps add `wss://` to a host), not `.onion`
+    /// (no place), answered its last reading, placed, and qualified without
+    /// any refusal (A6: R1, R2, R5, R6, R7, R9).
+    pub fn bitchat(&self) -> std::result::Result<Listed, String> {
+        let host = self
+            .url
+            .strip_prefix("wss://")
+            .filter(|h| !h.contains([':', '/']) && !h.ends_with(".onion"))
+            .ok_or("not a wss:// host on port 443 (R1, R4)")?;
+        match self.answered {
+            None => return Err("never read".into()),
+            Some(false) => {
+                return Err(format!(
+                    "did not answer ({})",
+                    self.failure.as_deref().unwrap_or("?")
+                ));
+            }
+            Some(true) => {}
+        }
+        if !self.qualified {
+            return Err("not qualified yet".into());
+        }
+        if let Some(r) = self.refusals.as_deref().filter(|r| !r.is_empty()) {
+            return Err(format!("refused: {r}"));
+        }
+        let (lat, lon) = self.place.ok_or_else(|| {
+            format!(
+                "not placed ({})",
+                self.locate_error
+                    .as_deref()
+                    .unwrap_or("no geolocation file")
+            )
+        })?;
+        Ok(Listed {
+            host: host.to_owned(),
+            lat,
+            lon,
+        })
+    }
+
+    /// `City CC`, as far as known.
+    pub fn where_(&self) -> String {
+        [self.city.as_deref(), self.country.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
 pub struct Store {
     conn: Connection,
 }
@@ -291,45 +360,43 @@ impl Store {
     }
 
     /// The relays the BitChat apps can use, as their lists give them
-    /// (`host,latitude,longitude`): `wss://` on port 443 with no path (R1,
-    /// R4: the apps add `wss://` to a host), not `.onion` (no place), that
-    /// answered their last reading, located, and qualified without any
-    /// refusal (A6: R1, R2, R5, R6, R7, R9).
+    /// (`host,latitude,longitude`): see [`Relay::bitchat`].
     pub fn bitchat(&self) -> Result<Vec<Listed>> {
+        Ok(self
+            .all()?
+            .iter()
+            .filter_map(|r| r.bitchat().ok())
+            .collect())
+    }
+
+    /// Every relay of the base, by URL.
+    pub fn all(&self) -> Result<Vec<Relay>> {
         let mut st = self
             .conn
             .prepare(
-                "SELECT url, lat, lon FROM relay
-                 WHERE answered = 1 AND lat IS NOT NULL AND lon IS NOT NULL
-                 AND qualified_at IS NOT NULL AND refusals = ''
-                 ORDER BY url",
+                "SELECT url, answered, failure, lat, lon, city, country, locate_error,
+                 qualified_at IS NOT NULL, refusals FROM relay ORDER BY url",
             )
             .map_err(db)?;
         let rows = st
             .query_map([], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, f64>(1)?,
-                    r.get::<_, f64>(2)?,
-                ))
+                Ok(Relay {
+                    url: r.get(0)?,
+                    answered: r.get(1)?,
+                    failure: r.get(2)?,
+                    place: match (r.get::<_, Option<f64>>(3)?, r.get::<_, Option<f64>>(4)?) {
+                        (Some(lat), Some(lon)) => Some((lat, lon)),
+                        _ => None,
+                    },
+                    city: r.get(5)?,
+                    country: r.get(6)?,
+                    locate_error: r.get(7)?,
+                    qualified: r.get(8)?,
+                    refusals: r.get(9)?,
+                })
             })
             .map_err(db)?;
-        let mut out = Vec::new();
-        for row in rows {
-            let (url, lat, lon) = row.map_err(db)?;
-            let Some(host) = url.strip_prefix("wss://") else {
-                continue;
-            };
-            if host.contains([':', '/']) || host.ends_with(".onion") {
-                continue;
-            }
-            out.push(Listed {
-                host: host.to_owned(),
-                lat,
-                lon,
-            });
-        }
-        Ok(out)
+        rows.collect::<rusqlite::Result<_>>().map_err(db)
     }
 
     pub fn summary(&self) -> Result<Summary> {

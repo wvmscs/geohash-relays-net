@@ -6,7 +6,7 @@
 //!
 //!   relay-census [--db relay-census.sqlite] [--tor-socks 127.0.0.1:9050 | --arti | --direct]
 //!       (--set <relay>... | --refresh [--geoip <file.mmdb>] [--rounds 8] [--probe]
-//!        | --compat bitchat [--out <file.csv>])
+//!        | --compat bitchat [--out <file.csv>] | --legacy [--lists-dir <dir>] [--out <file>])
 //!
 //! Exit code 2 for a wrong command line, 1 when the work cannot be done.
 
@@ -14,15 +14,17 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use geohash_relays::Platform;
 use geohash_relays::census::relay_url;
 use geohash_relays::params::{A6_PROBE_CELL, CENSUS_MAX_ROUNDS};
-use geohash_relays_net::census::{self, GeoIp, Refresh, Store};
+use geohash_relays_net::census::{self, GeoIp, Refresh, Store, legacy};
 use geohash_relays_net::connector::{Connector, Direct, Socks5};
 
 const USAGE: &str =
     "usage: relay-census [--db <file>] [--tor-socks <addr:port> | --arti | --direct]
        (--set <relay>... | --refresh [--geoip <file.mmdb>] [--rounds <n>] [--probe]
-        | --compat bitchat [--out <file.csv>]) [--verbose]
+        | --compat bitchat [--out <file.csv>]
+        | --legacy [--lists-dir <dir>] [--out <file>]) [--verbose]
 
   --set <relay>...     records relays (wss://… URLs, spaces or commas between them)
   --refresh            reads the relay lists (NIP-65, kind 10002) of the relays known, adds
@@ -34,7 +36,11 @@ const USAGE: &str =
   --probe              also writes, then reads back, one kind 20000 test event per relay
                        (throwaway key, cell 7zzzzzzz at sea): a real publication
   --compat bitchat     the relays the apps can use, in their lists' CSV form
-  --out <file.csv>     where to write it (default: standard output)
+  --legacy             the census against the apps' own lists (iOS, Android): - in a list
+                       but not usable (why), + usable but not in it, both (km apart)
+  --lists-dir <dir>    copies of the apps' lists, downloaded (through Tor) when missing or
+                       older than 24 h (default: the base's directory)
+  --out <file>         where to write --compat or --legacy (default: standard output)
   --db <file>          the census base (default relay-census.sqlite)
   --tor-socks <addr>   Tor daemon (default $BITCHAT_TOR_SOCKS, else 127.0.0.1:9050)
   --arti               Tor inside the program (built with --features arti)
@@ -45,6 +51,7 @@ enum Command {
     Set(Vec<String>),
     Refresh,
     Compat,
+    Legacy,
 }
 
 #[derive(Debug, PartialEq)]
@@ -62,6 +69,7 @@ struct Args {
     rounds: usize,
     probe: bool,
     out: Option<PathBuf>,
+    lists_dir: Option<PathBuf>,
     verbose: bool,
     command: Command,
 }
@@ -79,12 +87,13 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         rounds: CENSUS_MAX_ROUNDS,
         probe: false,
         out: None,
+        lists_dir: None,
         verbose: false,
         command: Command::Refresh,
     };
     let mut command = None;
     let set = |c: Command, command: &mut Option<Command>| match command {
-        Some(_) => Err("one of --set, --refresh, --compat".to_owned()),
+        Some(_) => Err("one of --set, --refresh, --compat, --legacy".to_owned()),
         None => {
             *command = Some(c);
             Ok(())
@@ -116,6 +125,8 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
             "--out" => a.out = Some(value()?.into()),
             "--verbose" => a.verbose = true,
             "--refresh" => set(Command::Refresh, &mut command)?,
+            "--legacy" => set(Command::Legacy, &mut command)?,
+            "--lists-dir" => a.lists_dir = Some(value()?.into()),
             "--compat" => {
                 let v = value()?;
                 if v != "bitchat" {
@@ -141,7 +152,7 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
             other => return Err(format!("unknown option {other}")),
         }
     }
-    a.command = command.ok_or("one of --set, --refresh, --compat")?;
+    a.command = command.ok_or("one of --set, --refresh, --compat, --legacy")?;
     if a.probe && a.command != Command::Refresh {
         return Err("--probe goes with --refresh".into());
     }
@@ -277,6 +288,53 @@ async fn main() {
                 }
             );
         }
+        Command::Legacy => {
+            let dir = args.lists_dir.clone().unwrap_or_else(|| {
+                args.db
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(std::path::Path::new("."))
+                    .to_path_buf()
+            });
+            // Tor only when a list must be downloaded.
+            let mut tor: Option<Arc<dyn Connector>> = None;
+            let mut text = String::new();
+            for platform in [Platform::Ios, Platform::Android] {
+                let app = match legacy::recent(&dir, platform) {
+                    Some(app) => app,
+                    None => {
+                        if tor.is_none() {
+                            tor = Some(connector(&args.tor, &args.db).await);
+                        }
+                        let c = tor.clone().expect("just set");
+                        eprintln!(
+                            "downloading the {} list through {}",
+                            platform.as_str(),
+                            c.describe()
+                        );
+                        legacy::download(&dir, platform, c)
+                            .await
+                            .unwrap_or_else(|e| fail("no list", e))
+                    }
+                };
+                let relays = store
+                    .all()
+                    .unwrap_or_else(|e| fail("cannot read the base", e));
+                let usable = relays.iter().filter(|r| r.bitchat().is_ok()).count();
+                let lines = legacy::diff(&relays, &app);
+                text.push_str(&legacy::render(
+                    &app,
+                    &format!("relay-census ({}, {usable} usable)", args.db.display()),
+                    &lines,
+                ));
+                text.push('\n');
+            }
+            match &args.out {
+                Some(path) => std::fs::write(path, text)
+                    .unwrap_or_else(|e| fail(&format!("cannot write {}", path.display()), e)),
+                None => print!("{text}"),
+            }
+        }
         Command::Compat => {
             let n = match &args.out {
                 Some(path) => {
@@ -338,5 +396,9 @@ mod tests {
         assert!(err("--compat bitchat --probe").contains("goes with --refresh"));
         assert!(err("--refresh --rounds 0").contains("--rounds"));
         assert!(err("--refresh --nope").contains("unknown option"));
+        let a = p("--legacy --lists-dir lists --out diff.txt").unwrap();
+        assert_eq!(a.command, Command::Legacy);
+        assert_eq!(a.lists_dir, Some(PathBuf::from("lists")));
+        assert!(err("--legacy --compat bitchat").contains("one of"));
     }
 }

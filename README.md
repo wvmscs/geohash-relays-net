@@ -37,6 +37,7 @@ cargo install --git https://github.com/wvmscs/geohash-relays-net --features cons
 relay-census --set wss://relay.primal.net wss://nos.lol      # the relays to start from
 relay-census --refresh --geoip dbip-city-lite.mmdb            # through Tor, read-only
 relay-census --compat bitchat --out relays.csv                # for the apps' lists
+relay-census --legacy                                         # against the apps' own lists
 ```
 
 - `--set`: records relays (normalised as the apps key servers; local and private addresses
@@ -51,6 +52,12 @@ relay-census --compat bitchat --out relays.csv                # for the apps' li
   publication on every relay, so only on purpose.
 - `--compat bitchat`: the usable relays in the apps' list format (`Relay URL,Latitude,Longitude`,
   a host per line): `wss://` on port 443 without a path, answered, placed, no refusal.
+- `--legacy`: the census against the apps' own lists, iOS then Android, as a diff by server:
+  `-` in the list but not usable for the census (and why: unknown, never read, did not
+  answer, refused, not placed), `+` usable for the census but not in the list (its place),
+  ` ` in both (how far apart the two places are). The lists are read from local copies
+  (`--lists-dir`, default the base's directory), downloaded through the connector when
+  missing or older than 24 h, as the apps do.
 - Through a Tor daemon by default (`--tor-socks`, `$BITCHAT_TOR_SOCKS`, else 127.0.0.1:9050),
   or Arti in the binary (`--arti`), or `--direct` (every relay then sees this machine).
 - The geolocation file is not included: DB-IP's free
