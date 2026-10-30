@@ -7,7 +7,8 @@
   `relay-census` (`--set`, `--refresh`, `--compat bitchat`) and its SQLite base; rounds of
   `geohash_relays::census::Crawler` (NIP-65 relay lists) until no relay is new; places from an
   offline IP geolocation file (DB-IP Lite, GeoLite2; `maxminddb`); A6 qualification, with a
-  write test on request (`--probe`); the apps' CSV list of usable relays.
+  write test on request (`--probe`); the apps' CSV list of usable relays. Places and
+  qualifications run at the same time (`tokio::join!`), each 16 at a time.
 - `Connector::resolve`: host names resolved where the connector resolves them (Tor's SOCKS5
   `RESOLVE`, Arti, the system for `Direct`, loopback for tests).
 - `qualify::run`: the A6 run, moved from bitchat-console, for it and the census.

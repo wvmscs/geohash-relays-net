@@ -7,9 +7,9 @@
 //! * relays given by hand ([`Store::give`]);
 //! * [`refresh`]: rounds of [`geohash_relays::census::Crawler`] over the
 //!   relays known, then over the new ones the relay lists (NIP-65) named,
-//!   until none is new; then, for every relay read, its place ([`geo`]) and
-//!   its A6 qualification ([`crate::qualify`]: NIP-11, and a write test on
-//!   request);
+//!   until none is new; then, for every relay that answered, at the same
+//!   time, its place ([`geo`]) and its A6 qualification ([`crate::qualify`]:
+//!   NIP-11, and a write test on request);
 //! * [`bitchat_csv`]: the relays the apps can use, as their lists give them.
 
 pub mod geo;
@@ -118,16 +118,31 @@ pub async fn refresh(
         .into_iter()
         .filter(|u| read.contains(u))
         .collect();
-    if let Some(geoip) = geoip {
-        report.located = locate(store, connector.clone(), geoip, &answered).await?;
-    }
+    // Places and qualifications at the same time: independent, each
+    // CENSUS_CONCURRENCY (or A6_CONCURRENCY) at a time.
     let limit = Duration::from_secs(
         (CENSUS_TIMEOUT_SECS as u64) * (answered.len() as u64 / CENSUS_CONCURRENCY as u64 + 2) * 2,
     );
-    let (prober, complete) =
-        crate::qualify::run(answered.clone(), connector, how.probe, limit).await;
-    let q = prober.qualification();
+    let placing = async {
+        match geoip {
+            Some(geoip) => locate(connector.clone(), geoip, &answered).await,
+            None => Vec::new(),
+        }
+    };
+    let qualifying = crate::qualify::run(answered.clone(), connector.clone(), how.probe, limit);
+    let (places, (prober, complete)) = tokio::join!(placing, qualifying);
     let now = unix_now();
+    for (url, place) in places {
+        match place {
+            Ok(Some(place)) => {
+                store.located(&url, &place, now)?;
+                report.located += 1;
+            }
+            Ok(None) => store.not_located(&url, "address not in the geolocation file", now)?,
+            Err(why) => store.not_located(&url, &why, now)?,
+        }
+    }
+    let q = prober.qualification();
     for url in &answered {
         if let Some(v) = q.verdicts.get(url) {
             store.qualified(url, prober.nip11_of(url).is_some(), v, now)?;
@@ -169,14 +184,13 @@ async fn round(relays: Vec<String>, connector: Arc<dyn Connector>) -> Crawler {
     crawler
 }
 
+/// A relay's place: `None` when its address is not in the file; why it has
+/// none otherwise.
+type Placed = (String, std::result::Result<Option<Place>, String>);
+
 /// Resolves each relay's host through the connector (Tor: by the exit) and
-/// places it. Returns how many were placed.
-async fn locate(
-    store: &Store,
-    connector: Arc<dyn Connector>,
-    geoip: &GeoIp,
-    relays: &[String],
-) -> Result<usize> {
+/// places it.
+async fn locate(connector: Arc<dyn Connector>, geoip: &GeoIp, relays: &[String]) -> Vec<Placed> {
     let gate = Arc::new(Semaphore::new(CENSUS_CONCURRENCY));
     let mut tasks = JoinSet::new();
     for url in relays {
@@ -194,20 +208,12 @@ async fn locate(
             (url, addresses)
         });
     }
-    let now = unix_now();
-    let mut placed = 0;
+    let mut placed = Vec::new();
     while let Some(done) = tasks.join_next().await {
         let Ok((url, addresses)) = done else { continue };
-        match addresses.map(|a| geoip.locate(&a)) {
-            Ok(Some(place)) => {
-                store.located(&url, &place, now)?;
-                placed += 1;
-            }
-            Ok(None) => store.not_located(&url, "address not in the geolocation file", now)?,
-            Err(why) => store.not_located(&url, &why, now)?,
-        }
+        placed.push((url, addresses.map(|a| geoip.locate(&a))));
     }
-    Ok(placed)
+    placed
 }
 
 /// The relays the BitChat apps can use, in their lists' CSV form

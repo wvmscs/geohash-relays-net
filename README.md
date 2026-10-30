@@ -43,7 +43,7 @@ relay-census --compat bitchat --out relays.csv                # for the apps' li
   refused).
 - `--refresh`: reads the relay lists of every known relay (the newest list of each author),
   adds the relays they name, and reads those, round after round until none is new
-  (`--rounds`, 8 by default). Then, for the relays that answered: their address (resolved
+  (`--rounds`, 8 by default). Then, for the relays that answered, both at the same time: their address (resolved
   through Tor), its place in the geolocation file (latitude, longitude, country, city,
   geohash), and the BitChat requirements (A6 of geohash-relays: NIP-11 declarations; R1, R2
   and R5 to R9 refuse, R8, R11, R13 warn). `--probe` adds a write test: one kind 20000 event
