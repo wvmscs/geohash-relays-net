@@ -32,7 +32,7 @@ use tokio::sync::{Semaphore, watch};
 use tokio::task::JoinSet;
 
 pub use geo::{GeoIp, Place};
-pub use store::{Listed, Relay, Store, Summary};
+pub use store::{Listed, Relay, Store, Summary, by_server};
 
 use crate::connector::Connector;
 use crate::error::Result;
@@ -227,7 +227,10 @@ async fn locate(connector: Arc<dyn Connector>, geoip: &GeoIp, relays: &[String])
 pub struct Eligibility {
     pub strategy: &'static str,
     pub needs: Needs,
+    /// Usable addresses…
     pub usable: usize,
+    /// … and the servers they are ([`by_server`]).
+    pub servers: usize,
     pub excluded: BTreeMap<Exclusion, usize>,
 }
 
@@ -240,6 +243,10 @@ pub fn eligibility(relays: &[Relay]) -> Vec<Eligibility> {
                 strategy,
                 needs: *needs,
                 usable: 0,
+                servers: by_server(relays, *needs)
+                    .values()
+                    .filter(|r| r.excluded(*needs).is_none())
+                    .count(),
                 excluded: BTreeMap::new(),
             };
             for r in relays {
@@ -263,20 +270,22 @@ pub fn render_eligibility(rows: &[Eligibility], total: usize) -> String {
         Exclusion::Clear,
         Exclusion::NoPlace,
     ];
-    let mut out = format!("{total} relays in the census.\n\n| Strategy | Needs a place | Usable |");
+    let mut out =
+        format!("{total} relays in the census.\n\n| Strategy | Needs a place | Usable | Servers |");
     for r in reasons {
         let _ = write!(out, " {} |", r.describe());
     }
-    out.push_str("\n|---|---|---|");
+    out.push_str("\n|---|---|---|---|");
     out.push_str(&"---|".repeat(reasons.len()));
     out.push('\n');
     for e in rows {
         let _ = write!(
             out,
-            "| {} | {} | {} |",
+            "| {} | {} | {} | {} |",
             e.strategy,
             if e.needs.place { "yes" } else { "no" },
-            e.usable
+            e.usable,
+            e.servers
         );
         for r in reasons {
             let _ = write!(out, " {} |", e.excluded.get(&r).copied().unwrap_or(0));
@@ -316,9 +325,11 @@ mod tests {
             locate_error: None,
             qualified: true,
             refusals: Some(String::new()),
+            mentions: 0,
         };
         let relays = [
             relay("wss://placed.example.org", true),
+            relay("wss://placed.example.org/inbox", true),
             relay("wss://abcdefghijklmnop.onion", false),
             Relay {
                 answered: Some(false),
@@ -327,18 +338,18 @@ mod tests {
         ];
         let rows = eligibility(&relays);
         let of = |name: &str| rows.iter().find(|e| e.strategy == name).unwrap();
-        assert_eq!(of("AS").usable, 1);
+        assert_eq!((of("AS").usable, of("AS").servers), (2, 1));
         assert_eq!(of("AS").excluded[&Exclusion::NoPlace], 1);
-        assert_eq!(of("A1").usable, 2);
+        assert_eq!((of("A1").usable, of("A1").servers), (3, 2));
         assert!(!of("A1").excluded.contains_key(&Exclusion::NoPlace));
         assert_eq!(of("A1").excluded[&Exclusion::NoAnswer], 1);
         let table = render_eligibility(&rows, relays.len());
         assert!(
-            table.contains("| AS | yes | 1 | 0 | 1 | 0 | 0 | 0 | 1 |"),
+            table.contains("| AS | yes | 2 | 1 | 0 | 1 | 0 | 0 | 0 | 1 |"),
             "{table}"
         );
         assert!(
-            table.contains("| A1 | no | 2 | 0 | 1 | 0 | 0 | 0 | 0 |"),
+            table.contains("| A1 | no | 3 | 2 | 0 | 1 | 0 | 0 | 0 | 0 |"),
             "{table}"
         );
     }

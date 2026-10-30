@@ -12,7 +12,9 @@
 - `relay-census --eligibility`: for each strategy, the relays it can use and the ones it
   leaves out, by reason (`geohash_relays::census::exclusion`, the `NEEDS` of each strategy).
   `--compat bitchat` follows the common rule of the harmonised apps: ports and paths kept,
-  one CSV (`Relay::bitchat`, `Relay::excluded`).
+  one CSV (`Relay::bitchat`, `Relay::excluded`), one address per server (`by_server`: the one
+  without a path, else the most named); `--legacy` compares by server; `--eligibility` counts
+  servers too.
 - `relay-census --legacy` (`census::legacy`): the census against the apps' own lists (iOS,
   Android), a diff by server with the reasons; the lists from local copies younger than 24 h,
   else downloaded through the connector (`--lists-dir`). `Store::all`, `Relay::bitchat` (one

@@ -5,10 +5,11 @@
 //! author, and what each list names. Migrations are numbered by
 //! `PRAGMA user_version`, applied in order, never edited.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use geohash_relays::a6::{Finding, Verdict};
-use geohash_relays::census::{Candidate, Exclusion, Outcome, RelayList, exclusion};
+use geohash_relays::census::{Candidate, Exclusion, Outcome, RelayList, exclusion, server};
 use geohash_relays::strategy::Health;
 use geohash_relays::strategy::Needs;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -98,6 +99,8 @@ pub struct Relay {
     pub qualified: bool,
     /// Requirements refused (`R5 AuthRequired; …`), empty when none.
     pub refusals: Option<String>,
+    /// Relay lists that name it.
+    pub mentions: usize,
 }
 
 impl Relay {
@@ -157,6 +160,31 @@ impl Relay {
             .collect::<Vec<_>>()
             .join(" ")
     }
+}
+
+/// One relay per server ([`server`]): the address a strategy with these
+/// `needs` can use first, then the one without a path, then the one the most
+/// relay lists name, then the first by URL. A server never takes several
+/// places of a cell (lot 13 of geohash-relays).
+pub fn by_server(relays: &[Relay], needs: Needs) -> BTreeMap<&str, &Relay> {
+    let mut out: BTreeMap<&str, &Relay> = BTreeMap::new();
+    for r in relays {
+        let key = server(&r.url);
+        let better = |old: &Relay| {
+            let rank = |x: &Relay| {
+                (
+                    x.excluded(needs).is_some(),
+                    x.url != server(&x.url),
+                    std::cmp::Reverse(x.mentions),
+                )
+            };
+            (rank(r), &r.url) < (rank(old), &old.url)
+        };
+        if out.get(key).is_none_or(|old| better(old)) {
+            out.insert(key, r);
+        }
+    }
+    out
 }
 
 pub struct Store {
@@ -368,13 +396,16 @@ impl Store {
     }
 
     /// The relays the BitChat apps can use, as their lists give them
-    /// (`host,latitude,longitude`): see [`Relay::bitchat`].
+    /// (`host,latitude,longitude`), one address per server: see
+    /// [`Relay::bitchat`] and [`by_server`].
     pub fn bitchat(&self) -> Result<Vec<Listed>> {
-        Ok(self
-            .all()?
-            .iter()
+        let all = self.all()?;
+        let mut out: Vec<Listed> = by_server(&all, geohash_relays::as_::NEEDS)
+            .into_values()
             .filter_map(|r| r.bitchat().ok())
-            .collect())
+            .collect();
+        out.sort_by(|a, b| a.host.cmp(&b.host));
+        Ok(out)
     }
 
     /// Every relay of the base, by URL.
@@ -383,7 +414,9 @@ impl Store {
             .conn
             .prepare(
                 "SELECT url, answered, failure, lat, lon, city, country, locate_error,
-                 qualified_at IS NOT NULL, refusals FROM relay ORDER BY url",
+                 qualified_at IS NOT NULL, refusals,
+                 (SELECT count(*) FROM list_relay l WHERE l.url = relay.url)
+                 FROM relay ORDER BY url",
             )
             .map_err(db)?;
         let rows = st
@@ -401,6 +434,7 @@ impl Store {
                     locate_error: r.get(7)?,
                     qualified: r.get(8)?,
                     refusals: r.get(9)?,
+                    mentions: r.get::<_, i64>(10)? as usize,
                 })
             })
             .map_err(db)?;
@@ -586,6 +620,48 @@ mod tests {
         assert!(onion.excluded(geohash_relays::a1::NEEDS).is_none());
         let sum = s.summary().unwrap();
         assert_eq!((sum.answered, sum.located, sum.usable), (7, 6, 7));
+    }
+
+    #[test]
+    fn one_address_per_server() {
+        let mut s = Store::open_in_memory().unwrap();
+        let urls: Vec<String> = [
+            "wss://a.example.org",
+            "wss://a.example.org/inbox",
+            "wss://b.example.org/x",
+            "wss://b.example.org/y",
+        ]
+        .map(String::from)
+        .into();
+        s.give(&urls, 1).unwrap();
+        let place = Place {
+            ip: "203.0.113.7".parse().unwrap(),
+            lat: 1.0,
+            lon: 2.0,
+            country: None,
+            city: None,
+            geohash: "s0".into(),
+        };
+        for u in &urls {
+            s.crawled(u, &Outcome::Answered { lists: 0 }, 2).unwrap();
+            s.located(u, &place, 3).unwrap();
+            s.qualified(u, false, &Verdict::default(), 4).unwrap();
+        }
+        // `/y` is named by two relay lists, `/x` by one.
+        s.list(&list("p", "1", 10, &["wss://b.example.org/y"]), 5)
+            .unwrap();
+        s.list(
+            &list(
+                "q",
+                "2",
+                10,
+                &["wss://b.example.org/y", "wss://b.example.org/x"],
+            ),
+            5,
+        )
+        .unwrap();
+        let hosts: Vec<String> = s.bitchat().unwrap().into_iter().map(|l| l.host).collect();
+        assert_eq!(hosts, ["a.example.org", "b.example.org/y"]);
     }
 
     #[test]

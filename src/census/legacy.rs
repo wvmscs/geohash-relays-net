@@ -10,17 +10,18 @@
 //! [`LIST_MAX_AGE_SECS`] (the apps download theirs every 24 h), else
 //! downloaded through the connector and kept ([`crate::lists::load`]).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use geohash_relays::census::server;
 use geohash_relays::params::LIST_MAX_AGE_SECS;
 use geohash_relays::select::haversine_km;
 use geohash_relays::{Platform, RelayDirectory, normalize_url};
 
-use super::store::Relay;
+use super::store::{Relay, by_server};
 use crate::connector::Connector;
 use crate::error::Result;
 use crate::lists::{ListSource, load};
@@ -104,23 +105,25 @@ impl Line {
     }
 }
 
-/// The diff of an app's list with the census, by host.
+/// The diff of an app's list with the census, by server ([`server`]): an
+/// app's list names a server once, the census may know it under several
+/// paths ([`by_server`] picks one).
 pub fn diff(relays: &[Relay], app: &AppList) -> Vec<Line> {
-    let census: BTreeMap<&str, &Relay> = relays.iter().map(|r| (r.url.as_str(), r)).collect();
+    let census = by_server(relays, geohash_relays::as_::NEEDS);
     // The list by server: Android may have one twice (`host`, `host:443`),
     // the first coordinates count.
     let mut listed: BTreeMap<String, (f64, f64)> = BTreeMap::new();
     for e in app.list.relays() {
         if let Some(url) = normalize_url(&e.url) {
-            listed.entry(url).or_insert((e.lat, e.lon));
+            listed
+                .entry(server(&url).to_owned())
+                .or_insert((e.lat, e.lon));
         }
     }
     let mut lines = Vec::new();
-    let mut seen = BTreeSet::new();
-    for (url, (lat, lon)) in &listed {
-        seen.insert(url.as_str());
-        let host = url.trim_start_matches("wss://").to_owned();
-        let line = match census.get(url.as_str()).map(|r| r.bitchat()) {
+    for (srv, (lat, lon)) in &listed {
+        let host = srv.trim_start_matches("wss://").to_owned();
+        let line = match census.get(srv.as_str()).map(|r| r.bitchat()) {
             None => Line::OnlyList {
                 host,
                 why: "unknown to the census".into(),
@@ -133,8 +136,8 @@ pub fn diff(relays: &[Relay], app: &AppList) -> Vec<Line> {
         };
         lines.push(line);
     }
-    for r in relays {
-        if seen.contains(r.url.as_str()) {
+    for (srv, r) in &census {
+        if listed.contains_key(*srv) {
             continue;
         }
         if let Ok(c) = r.bitchat() {
@@ -203,6 +206,7 @@ mod tests {
             locate_error: None,
             qualified: true,
             refusals: Some(refusals.into()),
+            mentions: 0,
         }
     }
 

@@ -53,10 +53,13 @@ relay-census --legacy                                         # against the apps
 - `--compat bitchat`: the usable relays in the apps' list format (`Relay URL,Latitude,Longitude`,
   an address without `wss://` per line), for the harmonised apps (one rule for iOS and
   Android, geohash-relays' `normalize_url`: ports and paths kept): answered, no refusal (A6),
-  not `ws://`, placed (the list serves strategies that rank by distance).
+  not `ws://`, placed (the list serves strategies that rank by distance); **one address per
+  server** (a server named under several paths would take several places of a cell): the one
+  without a path, else the one most relay lists name.
 - `--eligibility`: for each strategy (AS, A0 to A5), the relays it can use and the ones it
   leaves out, by reason (never read, no answer, refused, `ws://`, no place for a strategy that
-  ranks by distance): a comparison criterion of the strategies, as a Markdown table.
+  ranks by distance), in addresses and in servers: a comparison criterion of the strategies,
+  as a Markdown table.
 - `--legacy`: the census against the apps' own lists, iOS then Android, as a diff by server:
   `-` in the list but not usable for the census (and why: unknown, never read, did not
   answer, refused, not placed), `+` usable for the census but not in the list (its place),
