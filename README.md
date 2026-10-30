@@ -30,7 +30,9 @@ All three wait for `OK`, answer NIP-42 `AUTH` and read `CLOSED` (the apps ignore
 ## Census of relays: `relay-census`
 
 A SQLite base of the relays users name in their relay lists (NIP-65, kind 10002), with their
-place and whether the BitChat apps can use them.
+place and whether the BitChat apps can use them. It is meant to run now and then on a few
+machines that publish a list, not on every phone: thousands of phones reading every relay's
+lists would saturate the relays.
 
 ```sh
 cargo install --git https://github.com/wvmscs/geohash-relays-net --features console,census,arti relay-census
