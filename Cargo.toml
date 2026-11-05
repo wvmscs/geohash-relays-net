@@ -3,9 +3,9 @@
 
 [package]
 name = "geohash-relays-net"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
-description = "Communication for the geohash-relays strategies: the bitchat, bitchat-android and console implementations."
+description = "Communication for the geohash-relays strategies: the bitchat, bitchat-android, console and client implementations."
 license = "GPL-3.0-or-later"
 repository = "https://github.com/wvmscs/geohash-relays-net"
 
@@ -13,7 +13,9 @@ repository = "https://github.com/wvmscs/geohash-relays-net"
 [workspace]
 
 [dependencies]
-geohash-relays = { git = "https://github.com/wvmscs/geohash-relays.git", branch = "strategies" }
+# A tag of the branch `strategies`: a client depending on both crates gets
+# one geohash-relays (the same source), and a rewritten branch breaks nothing.
+geohash-relays = { git = "https://github.com/wvmscs/geohash-relays.git", tag = "strategies-2026.11.05" }
 thiserror = "2"
 tracing = "0.1"
 k256 = { version = "0.13", default-features = false, features = ["schnorr", "std"] }
@@ -41,10 +43,13 @@ tracing-subscriber = { version = "0.3", optional = true }
 
 [features]
 default = []
-# Exactly one of these three: whose communication functions are used.
+# Exactly one of these four: whose communication functions are used.
 bitchat = []
 bitchat-android = []
 console = []
+# A client of its own, not one of the apps (docs/integration.md): backoff
+# without limit, Tor optional.
+client = []
 # Tor inside the process (Arti), with any of them.
 arti = ["dep:arti-client", "dep:tor-rtcompat"]
 # The census of relays and its binary `relay-census` (NIP-65, A6, IP
@@ -55,3 +60,7 @@ census = ["dep:rusqlite", "dep:maxminddb", "dep:tracing-subscriber"]
 name = "relay-census"
 path = "src/bin/relay-census.rs"
 required-features = ["census", "console"]
+
+[[example]]
+name = "client"
+required-features = ["client"]

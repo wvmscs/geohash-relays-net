@@ -16,7 +16,7 @@ Rules that only concern the author's local checkout, if any, are in `AGENTS.loca
 
 ## Features
 
-Exactly one of three (a `compile_error!` otherwise), whose communication functions are used:
+Exactly one of four (a `compile_error!` otherwise), whose communication functions are used:
 
 - `bitchat`: the iOS/macOS app (`NostrRelayManager.swift`): 10 attempts then 10 min, ±20 %,
   history ended after 10 s without `EOSE`. Tor optional (`connector::Direct`), as in the app.
@@ -24,8 +24,11 @@ Exactly one of three (a `compile_error!` otherwise), whose communication functio
   optional.
 - `console`: bitchat-console and bitchat-geohash. **Tor mandatory** (no direct connector, only
   `Loopback` for tests), one circuit per cell.
+- `client`: a client of its own that integrates the strategies (`docs/integration.md`,
+  `examples/client.rs`): the console's backoff, Tor optional. It mirrors no app: its needs come
+  from the clients that use it.
 
-All three wait for `OK`, answer `AUTH` (NIP-42) and read `CLOSED`, which the apps ignore today
+All of them wait for `OK`, answer `AUTH` (NIP-42) and read `CLOSED`, which the apps ignore today
 (decision G13): the apps' side comes as pull requests (lot 12).
 
 `arti` adds Tor inside the process, with any of them.

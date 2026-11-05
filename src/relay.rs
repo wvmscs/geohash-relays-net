@@ -167,6 +167,8 @@ impl Policy {
     };
     /// Android (`NostrRelayManager.kt`): backoff without limit.
     pub const ANDROID: Policy = Policy::CONSOLE;
+    /// A client of its own: the console's backoff, without limit.
+    pub const CLIENT: Policy = Policy::CONSOLE;
 
     /// The policy of the active feature.
     pub const fn current() -> Policy {
@@ -174,7 +176,9 @@ impl Policy {
         return Policy::IOS;
         #[cfg(feature = "bitchat-android")]
         return Policy::ANDROID;
-        #[cfg(not(any(feature = "bitchat", feature = "bitchat-android")))]
+        #[cfg(feature = "client")]
+        return Policy::CLIENT;
+        #[cfg(not(any(feature = "bitchat", feature = "bitchat-android", feature = "client")))]
         Policy::CONSOLE
     }
 

@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-05
+
+### Added
+- Feature `client`: a client of its own, not one of the apps: backoff without limit
+  (`Policy::CLIENT`), Tor optional (`connector::Direct`).
+- `docs/integration.md`: how a client integrates geohash-relays and this crate (dependencies,
+  lists, strategies, connections, A6, rules); `examples/client.rs`, read only.
+
+### Changed
+- geohash-relays from its tag `strategies-2026.11.05` instead of the branch `strategies`: a
+  client depending on both crates gets one geohash-relays, and a rewritten branch breaks no
+  build. It brings AirHop's choice (`AirhopStrategy`).
+
 ## [0.1.0] - 2026-11-05
 
 ### Added

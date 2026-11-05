@@ -127,6 +127,8 @@ async fn retries_with_the_feature_policy() {
             "bitchat"
         } else if cfg!(feature = "bitchat-android") {
             "bitchat-android"
+        } else if cfg!(feature = "client") {
+            "client"
         } else {
             "console"
         }

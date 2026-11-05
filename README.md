@@ -2,15 +2,16 @@
 
 Communication for the [geohash-relays](https://github.com/wvmscs/geohash-relays) strategies:
 how a BitChat client reaches relays, with the behaviour of one implementation, chosen by a
-feature.
+feature. To integrate both crates in a client: [docs/integration.md](docs/integration.md).
 
 | Feature | Implementation | Behaviour |
 |---|---|---|
 | `bitchat` | iOS/macOS app | backoff 1 s to 5 min ±20 %, 10 attempts then 10 min, history ended after 10 s without `EOSE`; Tor optional |
 | `bitchat-android` | Android app | backoff 1 s to 5 min without limit; Tor optional |
 | `console` | bitchat-console, bitchat-geohash | backoff 1 s to 5 min without limit; **Tor mandatory**, one circuit per cell |
+| `client` | a client of its own ([docs/integration.md](docs/integration.md)) | backoff 1 s to 5 min without limit; Tor optional |
 
-All three wait for `OK`, answer NIP-42 `AUTH` and read `CLOSED` (the apps ignore them today).
+All of them wait for `OK`, answer NIP-42 `AUTH` and read `CLOSED` (the apps ignore them today).
 
 ## What it does
 

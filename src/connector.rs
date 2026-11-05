@@ -292,14 +292,24 @@ impl Connector for Loopback {
 }
 
 /// Direct TCP connections, without Tor, as the apps make when the user
-/// turns Tor off (`userTorEnabled`, `TorMode`). Features `bitchat` and
-/// `bitchat-android`, and `census` on request (`--direct`): the console
-/// never connects in clear.
-#[cfg(any(feature = "bitchat", feature = "bitchat-android", feature = "census"))]
+/// turns Tor off (`userTorEnabled`, `TorMode`). Features `bitchat`,
+/// `bitchat-android` and `client`, and `census` on request (`--direct`):
+/// the console never connects in clear.
+#[cfg(any(
+    feature = "bitchat",
+    feature = "bitchat-android",
+    feature = "client",
+    feature = "census"
+))]
 #[derive(Debug, Clone, Default)]
 pub struct Direct;
 
-#[cfg(any(feature = "bitchat", feature = "bitchat-android", feature = "census"))]
+#[cfg(any(
+    feature = "bitchat",
+    feature = "bitchat-android",
+    feature = "client",
+    feature = "census"
+))]
 impl Connector for Direct {
     fn connect<'a>(&'a self, host: &'a str, port: u16, _isolation: &'a str) -> Connecting<'a> {
         Box::pin(async move {
