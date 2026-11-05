@@ -40,7 +40,8 @@ All three wait for `OK`, answer `AUTH` (NIP-42) and read `CLOSED`, which the app
 - Never log keys, seeds, message contents or pubkeys.
 - Code, comments and rustdoc in English.
 - Own git repository (`origin` = `git@github.com:wvmscs/geohash-relays-net.git`, branch
-  `main`), own `[workspace]`. Tagged versions never change; no new tags.
+  `main`), own `[workspace]`. Versions are tagged on `main` (`vX.Y.Z`), and
+  bitchat-console depends on a tag; a tagged version never changes.
 
 ## Commands
 

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-05
+
 ### Added
 - Census of relays (feature `census`, lot 13 of geohash-relays, G15): the binary
   `relay-census` (`--set`, `--refresh`, `--compat bitchat`) and its SQLite base; rounds of
