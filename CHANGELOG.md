@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+- `docs/integration.md` rewritten for a developer who does not know the study: the problem, the
+  words, then five short steps with code.
+
 ## [0.2.0] - 2026-11-05
 
 ### Added
