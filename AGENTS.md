@@ -4,8 +4,8 @@ Guidance for coding agents (and humans) working in this crate.
 
 ## What this is
 
-`geohash-relays-net`: the communication of the `geohash-relays` strategies (decision G12 in the
-`PLAN_ET1.md` of [geohash-relays](https://github.com/wvmscs/geohash-relays), branch `strategies`):
+`geohash-relays-net`: the communication of the [geohash-relays](https://github.com/wvmscs/geohash-relays)
+strategies:
 connections to relays, relay lists, NIP-11 documents, and
 the runner of the strategy machines (`geohash_relays::sansio`). `geohash-relays` stays pure
 (no network) and proposable to the apps; everything that talks to the network is here, under
@@ -28,14 +28,13 @@ Exactly one of four (a `compile_error!` otherwise), whose communication function
   `examples/client.rs`): the console's backoff, Tor optional. It mirrors no app: its needs come
   from the clients that use it.
 
-All of them wait for `OK`, answer `AUTH` (NIP-42) and read `CLOSED`, which the apps ignore today
-(decision G13): the apps' side comes as pull requests (lot 12).
+All of them wait for `OK`, answer `AUTH` (NIP-42) and read `CLOSED`, which the apps ignore today.
 
 `arti` adds Tor inside the process, with any of them.
 
 ## Constraints
 
-- Every constant lives in `geohash_relays::params` (decision G14), with its source: none here.
+- Every constant lives in `geohash_relays::params`, with its source: none here.
 - Every behaviour of a feature cites the app source it mirrors (file and function).
 - Never publish on public relays or real channels from tests or by agents. Tests are offline
   (local relay, local SOCKS proxy); the ones on the real network are `#[ignore]`d and need the
