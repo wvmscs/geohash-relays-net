@@ -59,7 +59,7 @@ let list = RelayDirectory::parse(&csv, Platform::Android);
 - Where from: georelays' list, updated daily:
   `https://raw.githubusercontent.com/permissionlesstech/georelays/main/nostr_relays.csv`.
   Refresh it regularly: a list a few months old makes your users miss the others (see
-  geohash-relays' [docs/clients.md](https://github.com/wvmscs/geohash-relays/blob/strategies/docs/clients.md)).
+  geohash-relays' [docs/current-state.md](https://github.com/wvmscs/geohash-relays/blob/strategies/docs/current-state.md)).
 - `Platform` only says how the file is read: `Android` keeps every line as it is, `Ios` keeps
   one line per server. Use the one of the strategy you pick below.
 - With `geohash-relays-net`, `lists::load(source, platform, connector, cache_dir)` downloads it
