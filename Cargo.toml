@@ -31,7 +31,7 @@ webpki-roots = "1"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 # Tor in the binary (feature `arti`), like the iOS app.
 arti-client = { version = "0.47", optional = true, default-features = false, features = ["tokio", "rustls", "compression"] }
-tor-rtcompat = { version = "0.47", optional = true, default-features = false, features = ["tokio", "rustls"] }
+tor-rtcompat = { version = "0.48", optional = true, default-features = false, features = ["tokio", "rustls"] }
 # Census of relays (feature `census`, lot 13 of geohash-relays): its SQLite
 # base (0.40, the range Arti accepts: one sqlite3 linked), and the offline
 # IP geolocation (DB-IP Lite or GeoLite2 files, MaxMind DB format).
