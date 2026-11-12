@@ -15,7 +15,7 @@ repository = "https://github.com/wvmscs/geohash-relays-net"
 [dependencies]
 # A tag of the branch `strategies`: a client depending on both crates gets
 # one geohash-relays (the same source), and a rewritten branch breaks nothing.
-geohash-relays = { git = "https://github.com/wvmscs/geohash-relays.git", tag = "strategies-2026.11.05" }
+geohash-relays = { git = "https://github.com/wvmscs/geohash-relays.git", tag = "strategies-2026.11.06" }
 thiserror = "2"
 tracing = "0.1"
 k256 = { version = "0.13", default-features = false, features = ["schnorr", "std"] }
